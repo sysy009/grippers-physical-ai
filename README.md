@@ -2,172 +2,136 @@
 
 # 🤖 Grippers
 
-**장판 위 물건을 스스로 찾아 바구니에 정리하고, 부탁하면 사람 손에 가져다주는 모바일 매니퓰레이터**
+**말로 지시하면 장판 위 물건을 스스로 찾아 정리하고, 부탁하면 사람 손에 건네주는 피지컬 AI 로봇**
 
-탑뷰 카메라 2대 · 메카넘 차체 · SO-ARM101 팔 · 학습된 파지 정책(ACT)
+탑뷰 카메라 2대 · 메카넘 차체 · SO-ARM101 로봇팔 · 학습된 파지 정책(ACT)
+
+청년취업사관학교(SeSAC) **Intel AI for X** 과정 팀 프로젝트 · 2026.08 ~ 2026.10 · 5인 팀 **팀장**
 
 </div>
 
----
-
-## Table of Contents
-
-- [무엇을 하나](#무엇을-하나)
-- [어떻게 동작하나](#어떻게-동작하나)
-- [하드웨어](#하드웨어)
-- [작업장](#작업장)
-- [빠르게 띄우기](#빠르게-띄우기)
-- [저장소](#저장소)
-- [문서](#문서)
-- [개발](#개발)
-- [👥 Team](#-team)
-- [📃 License](#-license)
-- [📚 References](#-references)
+> [!NOTE]
+> 이 레포는 팀 저장소 [grippers-intel/grippers](https://github.com/grippers-intel/grippers)를 포크한 **개인 포트폴리오**입니다.
+> 코드는 팀 저장소와 같고, 이 README만 제 역할과 결과 중심으로 다시 썼습니다. 팀 원본 README는 [docs/TEAM_README.md](docs/TEAM_README.md)에 있습니다.
 
 ---
 
-## 무엇을 하나
+## 🎬 데모
+
+<table>
+<tr>
+<td align="center" width="50%"><img src="assets/demo_grasp.gif" width="260" alt="로봇팔이 기물을 집는 장면"></td>
+<td align="center" width="50%"><img src="assets/demo_ui_full_run.gif" width="300" alt="시연 UI에서 6개 기물을 모두 정리하는 과정"></td>
+</tr>
+<tr>
+<td align="center"><b>학습된 정책으로 기물 파지</b><br>실기 촬영 · 2배속</td>
+<td align="center"><b>"물건들 다 정리해 줘" → 6개 모두 바구니에</b><br>시연 UI 화면 · 12배속 (2026-10-05)</td>
+</tr>
+</table>
+
+## 📊 한눈에 보기
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| 6기물 정리 | **6/6** (첫 시도 파지 6/6) | 2026-10-13 교육장 최종 확인 |
+| 바구니 앞을 막는 배치 | **5/5** | 막는 기물부터 치우도록 순서 판단 |
+| "가져와" (사람 손에 건네기) | **2/2** | 손이 옮겨 가도 보이는 손으로 |
+| 멈춤 · 무응답 · 폭주 | **0** | 최종 확인 모든 판 |
+| 파지 정책 비교 | ACT **86 %** (6/7) vs Diffusion Policy 43 % (6/14) | 같은 날 실기 비교 → ACT 채택 |
+| 탑뷰 위치추정 반복도 | **0.51 mm / 0.084°** | 5,084 프레임 |
+| 노트북 CPU (작업 중) | 46.6 % → **19.0 %** | 물체 검출을 내장 그래픽(OpenVINO)으로 이전 |
+| 테스트 | Host 241개 · Pi 87개 + CI 4개 작업 | push 마다 린트 · 테스트 |
+
+자세한 측정값과 한계: [docs/results.md](docs/results.md)
+
+## 🎯 무엇을 하나
 
 | 지시 (입력창 · 마이크) | 로봇이 하는 일 |
 |---|---|
 | "모두 정리해줘" · "장난감만 정리해줘" | 작업장 안 해당 기물을 하나씩 찾아 집어 **바구니에 넣는다** — 다 없어질 때까지 |
-| "룩 가져와" | 룩을 집어 장판 위에 보이는 **사람 손 앞으로 가서 ㄱ자 자세로 건넨다** |
+| "룩 가져와" | 룩을 집어 장판 위에 보이는 **사람 손 앞으로 가서 건넨다** |
 
-- **대상 기물 6종**(3D 프린팅): 장난감 3 — 상자 · 축구공 · 별, 체스말 3 — 나이트 · 퀸 · 룩
-- **실기 결과**(교육장, 2026-10-13 최종 확인): 6기물 정리 6/6 · 바구니 앞을 막는 배치 5/5 · 가져와 2/2 — 멈춤(HALTED) · 무응답 · 폭주 0.
-  파지 첫 시도는 대체로 6번 중 5~6번 성공, 빈손이면 위치를 다시 보고 한 번 더 → [결과](docs/results.md)
+정리는 "무엇이 몇 개 있는지 모르는 상태"에서 시작하고, 하나를 옮길 때마다 바닥 상태가 바뀝니다.
+그래서 고정된 대본이 아니라 **관측 → 판단 → 행동을 매 사이클 다시 도는 FSM**으로 설계했습니다.
 
-## 어떻게 동작하나
+## 🙋 내 역할
 
-```mermaid
-flowchart LR
-  CAM["탑뷰 카메라 ×2"] --> HOST
-  subgraph HOST["노트북 (Host)"]
-    direction TB
-    S["ArUco 로 로봇 위치 · 기물 검출 · 손 검출"]
-    L["지시 해석 (Claude API) · 음성 (faster-whisper)"]
-    F["미션 상태머신 · 경로 계획"]
-    S --> F
-    L --> F
-  end
-  HOST -- "속도 · 상태 (UDP)" --> PI
-  PI -- "작업 결과 · 전압 (UDP)" --> HOST
-  subgraph PI["로봇 위 Raspberry Pi 5 (ROS 2)"]
-    direction TB
-    M["미션 노드 — 속도 실행 · 팔 작업 순서 · 안전"]
-    G["파지 — ACT 정책 (그리퍼 카메라 + 관절 → 관절)"]
-    A["팔 드라이버 — 서보 6개"]
-    M --> G --> A
-  end
-  PI --> W["메카넘 바퀴"]
-  A --> ARM["SO-ARM101"]
+**팀장 · Git Master · 전체 설계 총괄**
+
+- **프로젝트 운영**: 마일스톤 선언, 이슈 발행·할당, 상위 설계(HLD) 작성
+- **파지 정책 · 액션 시퀀스**: LeRobot ACT 정책 학습과 로봇 통합, Diffusion Policy와 같은 날 실기 비교해 ACT 채택
+- **Host(노트북) 파트**: 탑뷰 카메라 2대 ArUco 위치추정과 두 시야 좌표계 통합, 경로 계획, 미션 FSM, 실패·차단 처리
+- **`vla_robot` 전체 재작성**: 팀 1차 결과물(`legacy/`)의 구조적 문제를 정리해 Host · Pi · 정책 서버 코드를 한 벌로 새로 작성 (커밋 177건 직접 작성)
+- **자연어 · 음성 지시**: Claude API로 지시를 대상 라벨 · 모드로 해석, faster-whisper 오프라인 음성 인식 + 확인 단계
+
+## 🧱 시스템 구성
+
+```
+ 노트북 (Windows)                                 Raspberry Pi 5 (ROS2 Humble)
+ ┌───────────────────────────┐   UDP 5005        ┌──────────────────────────────────────────┐
+ │ host/run_host.py          │ ─ HostCommand ──▶ │ pi_mission_node ──Twist──▶ 차체 컨트롤러   │
+ │  탑뷰캠×2 + ArUco 위치추정 │                   │   │ (속도 제한 · 워치독 · 작업 순서)          │
+ │  Geti 물체 검출 · 경로계획 │ ◀── PiStatus ──── │   ├─ vla/run_grasp ─▶ vla_grasp_node (ACT) │
+ │  Host FSM · 지시 해석     │   UDP 5006        │   └─ arm/*          ─▶ arm_driver_node ─▶ 서보 │
+ └───────────────────────────┘                   │ gripper_cam_node ─▶ gripper_cam/image_raw  │
+ policy_server/ (선택, GPU)  ◀── HTTP 8770 ────── │                                          │
+                                                  └──────────────────────────────────────────┘
 ```
 
-- **공간은 노트북이, 실행은 Pi 가** — 위치 · 지도 · 경로 · 속도는 노트북이 정하고, Pi 는 받은 속도와 팔 작업만 실행합니다(명령에 좌표가 없음).
-- **언어는 해석, 행동은 학습** — 자연어는 Claude 가 "어떤 기물을 몇 개, 정리/가져오기"로 바꾸고, 집는 동작은 시연 데이터로 학습한 ACT 정책이 합니다.
-  파지 정책 자체는 언어를 받지 않습니다(그래서 학습한 6종만 집을 수 있음 — [한계](docs/results.md#4-알려진-한계)).
-- 정리는 목표가 목록으로 주어지지 않는 문제입니다 — 무엇이 몇 개 있는지 모른 채 시작하고 하나 옮길 때마다 바닥이 바뀝니다.
-  그래서 **관측 → 판단 → 행동**을 매 사이클(10 Hz) 다시 닫는 상태머신으로 풉니다.
+**미션 FSM**
 
-자세히 → [시스템 구성](docs/architecture.md) · [상태도](docs/state_machine.md) · [시퀀스](docs/sequences.md)
+```
+SEARCH_TARGET → APPROACH_PIECE → GRASP → CARRY_TO_DEST → NUDGE_BOX → PLACE → SEARCH_TARGET
+                                   │            └→ FACE_HAND → PLACE(handover)   ("가져와")
+                                   └ 실패: 1번 더 시도, 그래도 실패면 기물 보류 후 다시 탐색
+```
 
-## 하드웨어
+## 🔧 문제 해결 사례
 
-| 구분 | 구성 |
+팀 1차 결과물을 실기에서 돌리며 나온 문제를 `vla_robot` 재작성에서 구조로 막았습니다.
+
+| 문제 | 원인 | 해결 |
+|---|---|---|
+| 완료 보고 패킷 하나만 잃어도 로봇이 영원히 대기 | 완료(GRASP_DONE)를 UDP로 한 번만 전송 | 결과를 매 상태 패킷에 반복하고 `JobTracker`가 job_id로 판정 |
+| Host와 Pi가 서로 다른 메시지 규격으로 같은 포트 사용 | 규격 파일이 두 벌 | `vla_common/protocol.py` 하나를 양쪽이 import |
+| 손목 관절이 85.8° 어긋남 | 캘리브레이션 두 벌이 서보 EEPROM에 번갈아 기록 | 캘리브레이션 하나만 사용, 다르면 기동 거부 |
+| 그리퍼 카메라 `Device busy` | 두 노드가 서로 다른 해상도로 같은 장치를 엶 | `gripper_cam_node`만 장치를 열고 나머지는 토픽 구독 |
+| 학습 때와 추론 때 파지 결과가 다름 | 정책 입력 색 순서가 녹화(RGB)와 추론(BGR)에서 다름 | `policy.image_color`로 명시, 변환 위치를 한 곳으로 |
+| 설정 오타가 조용히 무시됨 | 런치 인자 여러 곳에 분산 | `robot.yaml` 한 파일, 모르는 키가 있으면 기동 거부 |
+
+**엣지 자원 최적화** — 반도체 전공자로서 연산을 어디에 둘지를 측정으로 정했습니다.
+
+- 물체 검출을 CPU에서 노트북 내장 그래픽으로 옮겨 검출 한 장 690 ms → 255 ms, 작업 중 CPU 46.6 % → 19.0 %
+- Pi 그리퍼 카메라를 대기 중 절전시켜 노드 CPU 41.5 % → 9.6 %, Pi 대기 전력 3.42 W → 약 2.9 W
+- ACT는 Pi CPU에서 청크당 0.4 ~ 0.47 s로 충분해 로컬 추론, 무거운 정책(DP · SmolVLA)만 GPU 정책 서버로 분리
+
+설계 판단의 근거는 [docs/decisions.md](docs/decisions.md)에 날짜와 함께 기록했습니다.
+
+## 🛠 기술 스택
+
+| 분야 | 사용 기술 |
 |---|---|
-| 이동 | MentorPi 메카넘 4륜 (제조사 차체 보드 · ROS 2 드라이버) |
-| 로봇 컴퓨터 | Raspberry Pi 5 — Docker 컨테이너 `IntelPi`(ROS 2 Humble) |
-| 팔 | SO-ARM101 팔로워 · Feetech STS3215 ×6 · TPU 그리퍼 + 그리퍼 카메라(USB) |
-| 탑뷰 | Logitech C920 ×2 · 바닥 ArUco 마커 4장 + 로봇 위 마커 1장 |
-| 노트북 | Windows · 기물 검출은 내장 그래픽(OpenVINO) |
+| 로봇 · 임베디드 | ROS2 Humble · Raspberry Pi 5 · Docker · Feetech 서보(SO-ARM101) · MentorPi 메카넘 차체 · Hailo-10H |
+| 인식 | OpenCV · ArUco · 카메라 캘리브레이션 · 호모그래피 · Intel Geti · OpenVINO · MediaPipe(손) |
+| 정책 · AI | LeRobot ACT · Diffusion Policy · Claude API(지시 해석) · faster-whisper(음성) |
+| 개발 | Python · pytest · ruff · GitHub Actions CI · UDP 통신 규격 설계 |
 
-## 작업장
+## 👥 팀
 
-배치 REV.2 — 2026-09-29 부터 지금까지 같은 배치입니다.
-
-```
- y (m)
- 1.830 +------------------- [CAM B  x 0.99  1.60 m] -------------------+
-       |                        +-----------+                         |
-       |                        |  BASKET   |  (0.99, 1.655)          |
- 1.480 |                        +---- v ----+  opening faces front    |
- 1.305 |  M3 * . . . . . . . . . . . . . . . . . . . . . . . . * M4   |
-       |     .                                                .       |
-       |     .          WORK AREA  (pieces go here)           .       |
-       |     .                                                .       |
- 0.525 |  M1 * . . . . . . . . . . . . . . . . . . . . . . . . * M2   |
-       |                                                              |
- 0.000 +------------------- [CAM A  x 0.99  1.60 m] -------------------+
-       0  0.07                       0.99                       1.91  1.98  x (m)
-```
-
-| 항목 | 현재 값 |
+| 이름 | 담당 |
 |---|---|
-| 바닥 · 좌표 | 장판 **1.980 × 1.830 m**(긴 변이 좌우), 가벽 없음 · 원점 = 장판 앞 · 왼 모서리, +x 오른쪽, +y 뒤쪽 |
-| 바닥 마커 | 4장(120 mm) — (0.070, 0.525) · (1.910, 0.525) · (0.070, 1.305) · (1.910, 1.305) |
-| 작업 구역 | 마커 네 장 안쪽 x 0.070–1.910 · y 0.525–1.305 — 기물은 여기에 둔다(밖의 기물은 대상이 아니고 장애물) |
-| 바구니 | **하나** — 뒤쪽 긴 변 가운데 (0.990, 1.655), 210 × 350 × 220 mm, 입구가 앞. 정차점 (0.990, 1.260) |
-| 주행 구역 | x 0.20–1.78 · y 0.25–1.575 (장판에서 로봇 반경 0.20 을 뺌) |
-| 탑뷰 카메라 | 앞 · 뒤 긴 변 가운데(x 0.990)에서 마주 봄, 렌즈 1.60 m · 하향 60.2° — 작업 구역을 두 대가 함께 본다 |
+| **이승용** (팀장) | 전체 설계 총괄 · Git Master · 파지 정책 · 액션 시퀀스 · `vla_robot` 재작성 |
+| 김동혁 | Vision · 검출 모델 · 부품 발주 |
+| 임성혁 | 명령 해석 · 문형 설계 · 하드웨어 총괄(기구부 · 전장 · 조립) |
+| 조현우 | ROS2 노드 · 통신 · 구조 설계 · 코드 리뷰 |
+| 김희수 | 데이터셋 · 검출 학습 · 노트북 관제 콘솔(UI) · STT/TTS |
 
-세트장을 다시 만들 때(마커 붙이기 · 카메라 세우기 · 확인) → [docs/map_rebuild.md](docs/map_rebuild.md)
+## 📖 더 보기
 
-## 빠르게 띄우기
-
-1. **Pi** — 컨테이너에서 스택 기동(소스 경로 런치): [docs/pi_deploy.md §4](docs/pi_deploy.md)
-2. **노트북**:
-   ```powershell
-   cd vla_robot\host
-   .venv\Scripts\python.exe run_host.py --pi-ip <Pi IP> --mode instructed
-   ```
-   시연 UI 가 `http://127.0.0.1:8765/` 로 열립니다. 로봇 없이 보려면 `--sim`.
-3. 하루 순서 · 끝낼 때 안전 종료 → [docs/handover.md](docs/handover.md)
-
-설치 · 캘리브레이션 · 첫 기동 → [vla_robot/README.md](vla_robot/README.md) · Host 도구 → [vla_robot/host/README.md](vla_robot/host/README.md)
-
-## 저장소
-
-```
-vla_robot/      최종 시스템 — host/(노트북) · ros2_ws/src/vla_*(Pi) · tools/
-docs/           문서 — 목차는 docs/README.md
-legacy/         2026년 8월 초기 설계의 코드와 문서 (기록용)
-ros2_ws/src/    MentorPi 제조사 ROS 2 패키지 (원본 참고)
-docker/  third_party/   Pi 컨테이너 정의 · SO-ARM 제공 자료
-```
-
-## 문서
-
-| | |
+| 문서 | 내용 |
 |---|---|
-| **처음이면** | [handover.md](docs/handover.md) — 지금 상태 한 장 |
-| 설계 | [시스템 구성](docs/architecture.md) · [인터페이스](docs/interfaces.md) · [폴더 · 모듈](docs/modules.md) · [상태도](docs/state_machine.md) · [시퀀스](docs/sequences.md) |
-| 판단과 결과 | [결정 기록](docs/decisions.md) · [결과 · 알려진 한계](docs/results.md) |
-| 운영 | [Pi 배포 · 기동 · 종료](docs/pi_deploy.md) · [동작과 설정](docs/behavior.md) · [맵 다시 만들기](docs/map_rebuild.md) |
-| 전체 목차 | [docs/README.md](docs/README.md) |
-
-## 개발
-
-- 시험: `vla_robot/host` 에서 `pytest` (Host 241) · Pi 쪽 순수 로직 87 — CI 가 push · PR 마다 실행
-- 린트: 저장소 루트에서 `ruff check .`
-- 브랜치 · PR · 병합 규칙 → [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## 👥 Team
-
-| 이름 | GitHub | 핵심 롤 | 세부 담당 |
-|---|---|---|---|
-| **이승용** | [@sysy009](https://github.com/sysy009) | Git Master · Action · 전체 설계 총괄 | Milestone 선언, issue 발행·할당, HLD, 파지 정책, 액션 시퀀스 |
-| **김동혁** | [@Feroninn](https://github.com/Feroninn) | Git Slave · Vision · 발주 | Conflict 해결, `git blame` 추적, 검출 모델, 부품 발주·장부 |
-| **임성혁** | [@alex7663](https://github.com/alex7663) | Language · 하드웨어 총괄 | 명령 해석·문형 설계, 기구부/전장, 조립·배선 |
-| **조현우** | [@kica927](https://github.com/kica927) | 중심잡기 · 코드 수장 · ROS2 | 구조 설계, 자세 안정화, ROS2 노드·통신, 코드 리뷰 |
-| **김희수** | [@Hease](https://github.com/Hease) | Perception · 데이터 · UI/UX · 음성 | 데이터셋, 검출 학습, **노트북 관제 콘솔**, STT/TTS, 시각화 |
-
-## 📃 License
-
-코드는 MIT License — [LICENSE](LICENSE). LeRobot 기반 구성 요소는 **Apache License 2.0** 을 따르며, 해당 코드를 포함하거나 파생한 파일에는 원 라이선스 고지를 유지합니다.
-
-## 📚 References
-
-- [LeRobot](https://github.com/huggingface/lerobot) — SO-ARM101 · ACT 학습 · 추론
-- [ROS 2 Humble](https://docs.ros.org/en/humble/)
-- [OpenCV ArUco](https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html) · [OpenVINO](https://docs.openvino.ai/) · [Intel Geti](https://docs.geti.intel.com/)
-- [MediaPipe Hand Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [Claude API](https://docs.anthropic.com/)
+| [vla_robot/README.md](vla_robot/README.md) | 구성도 · 설치 · 캘리브레이션 · 첫 기동 |
+| [docs/results.md](docs/results.md) | 실기 결과 · 측정값 · 알려진 한계 |
+| [docs/decisions.md](docs/decisions.md) | 설계 결정 기록 |
+| [docs/handover.md](docs/handover.md) | 프로젝트 마무리 정리 |
+| [docs/TEAM_README.md](docs/TEAM_README.md) | 팀 원본 README |
